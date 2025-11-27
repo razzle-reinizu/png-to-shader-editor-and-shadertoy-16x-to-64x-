@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>PNG to Shader Editor (GLES 300) 16×16 Only</title>
+<title>PNG(16x16) to Shader Editor</title>
 <style>
 :root{
   --bg:#0f1720;
@@ -26,27 +26,30 @@ button:disabled{opacity:0.45;cursor:default}
 .note{font-size:12px;color:#9fb1c9;margin:0}
 .shader-box{flex:1}
 .shader-output{white-space:pre-wrap;background:#07121a;padding:12px;border-radius:8px;min-height:256px;overflow:auto;border:1px solid rgba(255,255,255,0.03)}
-.footer{margin-top:12px;font-size:13px;color:#9fb1c9}
 </style>
 </head>
 <body>
   <main class="container">
-    <h1>PNG to GLSL 16×16</h1>
+    <h1>PNG(16x16) to Shader Editor</h1>
 
     <label class="file-row">
-      <span>Pilih file PNG 16×16</span>
+      <span>Select PNG 16x16</span>
       <input id="file" type="file" accept="image/png">
     </label>
 
     <div class="controls">
-      <a id="downloadShader" class="btn" download="" style="text-decoration:none"><button id="btnShader" disabled>Download shader (.frag)</button></a>
-      <a id="downloadPreview" class="btn" download="" style="text-decoration:none"><button id="btnPreview" disabled>Download preview (PNG)</button></a>
+      <a id="downloadShader" download="" style="text-decoration:none">
+        <button id="btnShader" disabled>Download Shader (.frag)</button>
+      </a>
+      <a id="downloadPreview" download="" style="text-decoration:none">
+        <button id="btnPreview" disabled>Download Preview (PNG)</button>
+      </a>
     </div>
 
     <section class="preview-row">
       <div class="preview-box">
         <img id="previewImg" alt="preview" width="256" height="256">
-        <p class="note">Preview (nearest / pixelated)</p>
+        <p class="note">Preview</p>
       </div>
 
       <div class="shader-box">
@@ -54,7 +57,6 @@ button:disabled{opacity:0.45;cursor:default}
       </div>
     </section>
 
-    <div class="footer">Untuk deploy di GitHub Pages: taruh file ini di root repo dan pilih Pages → Source: main branch / root. Buka URL setelah beberapa menit.</div>
   </main>
 
 <script>
@@ -153,14 +155,12 @@ fileInput.addEventListener('change', () => {
     const shaderUrl = URL.createObjectURL(shaderBlob);
     downloadShader.href = shaderUrl;
     downloadShader.download = f.name.replace(/\.[^.]+$/, '') + "_16x16.frag";
-    downloadShader.style.display = 'inline-block';
     btnShader.disabled = false;
 
     const previewBlob = await createPreviewBlob(c);
     const prevUrl = URL.createObjectURL(previewBlob);
     downloadPreview.href = prevUrl;
     downloadPreview.download = f.name.replace(/\.[^.]+$/, '') + "_preview_256.png";
-    downloadPreview.style.display = 'inline-block';
     btnPreview.disabled = false;
   };
 });
