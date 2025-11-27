@@ -219,13 +219,56 @@ generateBtn.addEventListener('click', ()=>{
   downloadPreviewBtn.onclick = ()=>downloadCanvasAsPng(lastImageData, N, `preview_${N}x${N}.png`);
 });
 
-copyBtn.addEventListener('click', async ()=>{
-  try{
-    await navigator.clipboard.writeText(editor.value);
+// Better copy handler with fallback for insecure/older environments
+copyBtn.addEventListener('click', async () => {
+  const text = editor.value || '';
+  // helper to show success briefly
+  function flashCopySuccess() {
+    const prev = copyBtn.textContent;
     copyBtn.textContent = 'Copied ✓';
-    setTimeout(()=>copyBtn.textContent='Copy',1200);
-  }catch(e){
-    alert('Copy failed — please select and copy manually.');
+    setTimeout(() => { copyBtn.textContent = prev; }, 1200);
+  }
+
+  // Try the modern async Clipboard API first (requires secure context)
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      flashCopySuccess();
+      return;
+    } catch (e) {
+      // fall through to fallback method
+      // console.warn('navigator.clipboard failed, falling back:', e);
+    }
+  }
+
+  // Fallback: create a temporary textarea, select and execCommand('copy')
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    // Prevent scrolling to bottom and keep it off-screen
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+
+    if (ok) {
+      flashCopySuccess();
+      return;
+    } else {
+      throw new Error('execCommand returned false');
+    }
+  } catch (err) {
+    // Last resort: select the editor content and ask the user to press Ctrl/Cmd+C
+    try {
+      editor.focus();
+      editor.select();
+    } catch (e) {}
+    alert('Copy failed — please press Ctrl+C (Cmd+C on Mac) to copy manually.');
   }
 });
 
@@ -295,7 +338,8 @@ vec4 samplePixel(ivec2 p){
 vec4 sampleUV(vec2 uv){
   uv = clamp(uv, 0.0, 1.0);
   int x = int(floor(uv.x * float(W)));
-  int y = int(floor(uv.y * float(H)));
+  // flip Y so texture (which is stored top-to-bottom) maps correctly to shader coords
+  int y = int(floor((1.0 - uv.y) * float(H)));
   return samplePixel(ivec2(x,y));
 }
 
@@ -327,7 +371,8 @@ vec4 samplePixel(ivec2 p){
 vec4 sampleUV(vec2 uv){
   uv = clamp(uv, 0.0, 1.0);
   int x = int(floor(uv.x * float(W)));
-  int y = int(floor(uv.y * float(H)));
+  // flip Y so texture (which is stored top-to-bottom) maps correctly to shader coords
+  int y = int(floor((1.0 - uv.y) * float(H)));
   return samplePixel(ivec2(x,y));
 }
 
@@ -355,7 +400,8 @@ vec4 samplePixel(ivec2 p){
 vec4 sampleUV(vec2 uv){
   uv = clamp(uv, 0.0, 1.0);
   int x = int(floor(uv.x * float(W)));
-  int y = int(floor(uv.y * float(H)));
+  // flip Y so texture (which is stored top-to-bottom) maps correctly to shader coords
+  int y = int(floor((1.0 - uv.y) * float(H)));
   return samplePixel(ivec2(x,y));
 }
 
