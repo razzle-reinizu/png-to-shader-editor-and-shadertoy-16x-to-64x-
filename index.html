@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Image → Shader</title>
+<title>Image → Shader (Auto-Palettized)</title>
 <style>
   :root{
     --bg:#0b1220; --card:#0f1724; --panel:#071029; --muted:#93a0b5; --accent:#1f6feb;
@@ -38,8 +38,8 @@
   }
 
   .controls{display:flex;gap:8px;flex-wrap:wrap}
-  button{cursor:pointer;border:none}
-  button:disabled{opacity:.35;cursor:not-allowed}
+  button{cursor:pointer;border:none;background:#1f6feb;color:white;font-weight:bold;}
+  button:disabled{opacity:.35;cursor:not-allowed;background:var(--panel);color:#e6eef6;font-weight:normal;}
 
   .preview-wrap{display:flex;flex-direction:column;align-items:center;gap:8px}
   img#preview{image-rendering:pixelated;border-radius:6px;border:1px solid rgba(255,255,255,.04);background:#06111b}
@@ -95,7 +95,7 @@
 
     <div class="controls">
       <button id="generateBtn" disabled>Generate</button>
-      <button id="downloadBtn" disabled>Download .frag</button>
+      <button id="downloadBtn" disabled>Download .txt</button>
       <button id="copyBtn" disabled>Copy</button>
       <button id="downloadPreviewBtn" disabled>Download PNG</button>
     </div>
@@ -215,37 +215,29 @@ generateBtn.addEventListener('click', ()=>{
   downloadPreviewBtn.disabled = false;
   copyBtn.disabled = false;
 
-  downloadBtn.onclick = ()=>downloadTextAsFile(shaderText, `image_shader_${N}x${N}_${target}${target==='editor'?('_v'+version):''}.frag`);
+  downloadBtn.onclick = ()=>downloadTextAsFile(shaderText, `image_shader_${N}x${N}_${target}${target==='editor'?('_v'+version):''}.txt`);
   downloadPreviewBtn.onclick = ()=>downloadCanvasAsPng(lastImageData, N, `preview_${N}x${N}.png`);
 });
 
-// Better copy handler with fallback for insecure/older environments
 copyBtn.addEventListener('click', async () => {
   const text = editor.value || '';
-  // helper to show success briefly
   function flashCopySuccess() {
     const prev = copyBtn.textContent;
     copyBtn.textContent = 'Copied ✓';
     setTimeout(() => { copyBtn.textContent = prev; }, 1200);
   }
 
-  // Try the modern async Clipboard API first (requires secure context)
   if (navigator.clipboard && navigator.clipboard.writeText) {
     try {
       await navigator.clipboard.writeText(text);
       flashCopySuccess();
       return;
-    } catch (e) {
-      // fall through to fallback method
-      // console.warn('navigator.clipboard failed, falling back:', e);
-    }
+    } catch (e) {}
   }
 
-  // Fallback: create a temporary textarea, select and execCommand('copy')
   try {
     const ta = document.createElement('textarea');
     ta.value = text;
-    // Prevent scrolling to bottom and keep it off-screen
     ta.style.position = 'fixed';
     ta.style.left = '-9999px';
     ta.style.top = '0';
@@ -263,11 +255,7 @@ copyBtn.addEventListener('click', async () => {
       throw new Error('execCommand returned false');
     }
   } catch (err) {
-    // Last resort: select the editor content and ask the user to press Ctrl/Cmd+C
-    try {
-      editor.focus();
-      editor.select();
-    } catch (e) {}
+    try { editor.focus(); editor.select(); } catch (e) {}
     alert('Copy failed — please press Ctrl+C (Cmd+C on Mac) to copy manually.');
   }
 });
@@ -292,41 +280,67 @@ function downloadCanvasAsPng(imageData, N, filename){
   }, 'image/png');
 }
 
-/*
-  For GL100: arrays with explicit large constructors are not supported in many editors.
-  We generate a fallback lookup function `vec4 getPixel(int idx)` that returns each pixel via if-chain.
-  This is verbose but compatible with legacy GLSL (GL 100).
-*/
-
+/* =====================================================================
+   CORE MODIFICATION: Auto-Palettize Data (Extract Defines & Shape)
+   ===================================================================== */
 function makeShaderText(imgData, W, H, targetMode, versionFlag){
   const pixels = imgData.data;
   const total = W*H;
-  const vals = [];
-  for(let i=0;i<total;i++){
+  
+  // Kamus warna untuk menyimpan dan mengelola makro
+  const colorMap = new Map();
+  let defines = [];
+  let pixelMacros = [];
+  
+  // Abjad unik untuk warna. Huruf 'T' dilewati khusus untuk Transparan.
+  const letters = "ABCDEFGHIJKLMNOPQRSUVWXYZabcdefghijklmnopqrstuvwxyz";
+  let letterIdx = 0;
+
+  for(let i=0; i<total; i++){
     const j = i*4;
     const r = (pixels[j]/255).toFixed(4);
     const g = (pixels[j+1]/255).toFixed(4);
     const b = (pixels[j+2]/255).toFixed(4);
     const a = (pixels[j+3]/255).toFixed(4);
-    vals.push(`vec4(${r}, ${g}, ${b}, ${a})`);
+
+    const vecStr = `vec4(${r}, ${g}, ${b}, ${a})`;
+    let macro = "";
+
+    // Deteksi warna murni transparan atau alpha 0
+    if(a === "0.0000" || vecStr === "vec4(0.0000, 0.0000, 0.0000, 0.0000)"){
+      macro = "T";
+      if(!colorMap.has("T")){
+        colorMap.set("T", "vec4(0.0)");
+        defines.push(`#define T vec4(0.0)`);
+      }
+    } else {
+      // Jika warna sudah ada di memori kamus
+      if(colorMap.has(vecStr)){
+        macro = colorMap.get(vecStr);
+      } else {
+        // Buat alias baru (A, B, C... jika habis gunakan C51, C52...)
+        macro = letterIdx < letters.length ? letters[letterIdx] : `C${letterIdx}`;
+        letterIdx++;
+        colorMap.set(vecStr, macro);
+        defines.push(`#define ${macro} ${vecStr}`);
+      }
+    }
+    pixelMacros.push(macro);
   }
 
-  // chunked string builder for readability in the generated shader
-  const chunk = 8;
-  const arrLines = [];
-  for(let i=0;i<vals.length;i+=chunk){
-    arrLines.push('  ' + vals.slice(i,i+chunk).join(', '));
-  }
+  // Padding teks makro agar kolom rapi (ASCII Art)
+  const maxLen = Math.max(...pixelMacros.map(m => m.length));
+  const paddedMacros = pixelMacros.map(m => m.padEnd(maxLen, ' '));
 
   if(targetMode === 'shadertoy'){
-    // Shadertoy: use mainImage, built-ins (iResolution, iTime, iMouse)
     return `// Shadertoy-ready shader — size: ${W}x${H}
 precision mediump float;
 
 const int W = ${W};
 const int H = ${H};
 const int TOTAL = ${total};
-${genPixelsArrayOrFallback(vals, total, /*forceFallback=*/false)}
+
+${genPixelsArrayOrFallback(defines, paddedMacros, W, total, false)}
 
 vec4 samplePixel(ivec2 p){
   int x = clamp(p.x, 0, W-1);
@@ -338,7 +352,6 @@ vec4 samplePixel(ivec2 p){
 vec4 sampleUV(vec2 uv){
   uv = clamp(uv, 0.0, 1.0);
   int x = int(floor(uv.x * float(W)));
-  // flip Y so texture (which is stored top-to-bottom) maps correctly to shader coords
   int y = int(floor((1.0 - uv.y) * float(H)));
   return samplePixel(ivec2(x,y));
 }
@@ -349,17 +362,18 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
 }
 `;
   } else {
-    // Shader Editor mode: add uniforms resolution,time,touch
     const uniforms = `uniform vec2 resolution;\nuniform float time;\nuniform vec2 touch;\n`;
     if(versionFlag === '300'){
       return `#version 300 es
 precision highp float;
 ${uniforms}
 out vec4 fragColor;
+
 const int W = ${W};
 const int H = ${H};
 const int TOTAL = ${total};
-${genPixelsArrayOrFallback(vals, total, /*forceFallback=*/false)}
+
+${genPixelsArrayOrFallback(defines, paddedMacros, W, total, false)}
 
 vec4 samplePixel(ivec2 p){
   int x = clamp(p.x, 0, W-1);
@@ -371,7 +385,6 @@ vec4 samplePixel(ivec2 p){
 vec4 sampleUV(vec2 uv){
   uv = clamp(uv, 0.0, 1.0);
   int x = int(floor(uv.x * float(W)));
-  // flip Y so texture (which is stored top-to-bottom) maps correctly to shader coords
   int y = int(floor((1.0 - uv.y) * float(H)));
   return samplePixel(ivec2(x,y));
 }
@@ -382,13 +395,13 @@ void main(){
 }
 `;
     } else {
-      // GL 100 legacy: do NOT use array constructor initialization — use function fallback
       return `precision mediump float;
 ${uniforms}
 const int W = ${W};
 const int H = ${H};
 const int TOTAL = ${total};
-${genPixelsArrayOrFallback(vals, total, /*forceFallback=*/true)}
+
+${genPixelsArrayOrFallback(defines, paddedMacros, W, total, true)}
 
 vec4 samplePixel(ivec2 p){
   int x = clamp(p.x, 0, W-1);
@@ -400,7 +413,6 @@ vec4 samplePixel(ivec2 p){
 vec4 sampleUV(vec2 uv){
   uv = clamp(uv, 0.0, 1.0);
   int x = int(floor(uv.x * float(W)));
-  // flip Y so texture (which is stored top-to-bottom) maps correctly to shader coords
   int y = int(floor((1.0 - uv.y) * float(H)));
   return samplePixel(ivec2(x,y));
 }
@@ -414,32 +426,27 @@ void main(){
   }
 }
 
-// Helper: generate either a static const array (for contexts that accept it) OR a fallback function getPixel(idx).
-// For GL100 we force fallback because many editors don't accept vec4[...] constructors.
-function genPixelsArrayOrFallback(vals, total, forceFallback){
-  // If not forcing fallback and total is small, try array initializer - but we still support fallback universally.
-  // To be safe, produce a small array initializer for GLES300; for GL100 we MUST use fallback.
+function genPixelsArrayOrFallback(defines, paddedMacros, W, total, forceFallback){
+  const defineBlock = defines.join('\n');
+  
   if(!forceFallback){
-    // produce a const vec4 pixels[...] array and a simple getPixel that indexes it.
     const arrLines = [];
-    for(let i=0;i<vals.length;i+=8){
-      arrLines.push('  ' + vals.slice(i,i+8).join(', '));
+    // Baris dibuat otomatis berdasarkan lebar gambar (W)
+    for(let i=0; i<paddedMacros.length; i+=W){
+      arrLines.push('  ' + paddedMacros.slice(i, i+W).join(', '));
     }
-    return `const vec4 pixels[TOTAL] = vec4[TOTAL](\n${arrLines.join(',\n')}\n);\n\nvec4 getPixel(int idx){\n  return pixels[idx];\n}\n`;
+    return `${defineBlock}\n\nconst vec4 pixels[TOTAL] = vec4[TOTAL](\n${arrLines.join(',\n')}\n);\n\nvec4 getPixel(int idx){\n  return pixels[idx];\n}\n`;
   } else {
-    // fallback: generate a getPixel function with if-chain (compatible with GL100)
-    // Build in chunks to avoid extremely long single string concatenations in some environments.
-    let out = 'vec4 getPixel(int idx){\n';
-    // Use a chain of if statements
-    for(let i=0;i<vals.length;i++){
-      out += `  if(idx==${i}) return ${vals[i]};\n`;
+    // GL100 Fallback tetap diuntungkan oleh Macro yang lebih singkat
+    let out = `${defineBlock}\n\nvec4 getPixel(int idx){\n`;
+    for(let i=0; i<total; i++){
+      out += `  if(idx==${i}) return ${paddedMacros[i].trim()};\n`;
     }
-    out += '  return vec4(0.0,0.0,0.0,0.0);\n}\n';
+    out += '  return vec4(0.0);\n}\n';
     return out;
   }
 }
 
-// Initialize
 disableAll();
 </script>
 </body>
