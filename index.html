@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Image → Shader (Auto-Palettized)</title>
+<title>Image → Shader (Auto-Palettized Safe)</title>
 <style>
   :root{
     --bg:#0b1220; --card:#0f1724; --panel:#071029; --muted:#93a0b5; --accent:#1f6feb;
@@ -281,20 +281,18 @@ function downloadCanvasAsPng(imageData, N, filename){
 }
 
 /* =====================================================================
-   CORE MODIFICATION: Auto-Palettize Data (Extract Defines & Shape)
+   CORE MODIFICATION: Auto-Palettize with cpix1, cpix2... safe format
    ===================================================================== */
 function makeShaderText(imgData, W, H, targetMode, versionFlag){
   const pixels = imgData.data;
   const total = W*H;
   
-  // Kamus warna untuk menyimpan dan mengelola makro
   const colorMap = new Map();
   let defines = [];
   let pixelMacros = [];
   
-  // Abjad unik untuk warna. Huruf 'T' dilewati khusus untuk Transparan.
-  const letters = "ABCDEFGHIJKLMNOPQRSUVWXYZabcdefghijklmnopqrstuvwxyz";
-  let letterIdx = 0;
+  // Menggunakan counter angka murni untuk menghindari limit abjad
+  let colorIdx = 1;
 
   for(let i=0; i<total; i++){
     const j = i*4;
@@ -306,21 +304,19 @@ function makeShaderText(imgData, W, H, targetMode, versionFlag){
     const vecStr = `vec4(${r}, ${g}, ${b}, ${a})`;
     let macro = "";
 
-    // Deteksi warna murni transparan atau alpha 0
     if(a === "0.0000" || vecStr === "vec4(0.0000, 0.0000, 0.0000, 0.0000)"){
-      macro = "T";
+      macro = "T"; // Mempertahankan T untuk Transparan agar lebih rapi dilihat
       if(!colorMap.has("T")){
         colorMap.set("T", "vec4(0.0)");
         defines.push(`#define T vec4(0.0)`);
       }
     } else {
-      // Jika warna sudah ada di memori kamus
       if(colorMap.has(vecStr)){
         macro = colorMap.get(vecStr);
       } else {
-        // Buat alias baru (A, B, C... jika habis gunakan C51, C52...)
-        macro = letterIdx < letters.length ? letters[letterIdx] : `C${letterIdx}`;
-        letterIdx++;
+        // Menggunakan cpix1, cpix2, dst.
+        macro = `cPx${colorIdx}`;
+        colorIdx++;
         colorMap.set(vecStr, macro);
         defines.push(`#define ${macro} ${vecStr}`);
       }
@@ -328,7 +324,7 @@ function makeShaderText(imgData, W, H, targetMode, versionFlag){
     pixelMacros.push(macro);
   }
 
-  // Padding teks makro agar kolom rapi (ASCII Art)
+  // Padding teks makro agar kolom tetap rapi walau panjang angkanya berbeda (contoh: cpix1 vs cpix10)
   const maxLen = Math.max(...pixelMacros.map(m => m.length));
   const paddedMacros = pixelMacros.map(m => m.padEnd(maxLen, ' '));
 
@@ -431,13 +427,11 @@ function genPixelsArrayOrFallback(defines, paddedMacros, W, total, forceFallback
   
   if(!forceFallback){
     const arrLines = [];
-    // Baris dibuat otomatis berdasarkan lebar gambar (W)
     for(let i=0; i<paddedMacros.length; i+=W){
       arrLines.push('  ' + paddedMacros.slice(i, i+W).join(', '));
     }
     return `${defineBlock}\n\nconst vec4 pixels[TOTAL] = vec4[TOTAL](\n${arrLines.join(',\n')}\n);\n\nvec4 getPixel(int idx){\n  return pixels[idx];\n}\n`;
   } else {
-    // GL100 Fallback tetap diuntungkan oleh Macro yang lebih singkat
     let out = `${defineBlock}\n\nvec4 getPixel(int idx){\n`;
     for(let i=0; i<total; i++){
       out += `  if(idx==${i}) return ${paddedMacros[i].trim()};\n`;
